@@ -1,3 +1,8 @@
+<h1>
+  NOTE
+</h1>
+<p>This is a forked version of goodreads-user-scraper and so some of the documentation below no longer applies. This version has been modified to add noninteractive capabilities, SQLite database upserting and using the scrapling framework in place of aiohttp and beautifulsoup.</p>
+
 <h1 align="center">
   <img alt="Goodreads Icon" width="200" src="https://raw.githubusercontent.com/YashTotale/goodreads-user-scraper/main/assets/goodreads.svg"></img>
   <p></p>
