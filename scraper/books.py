@@ -5,7 +5,7 @@ from typing import Any
 from scrapling.parser import Selector
 
 from scraper import author, http
-from scraper.parse import find_tag, find_tag_opt
+from scraper.parse import find_tag, find_tag_opt, get_text
 
 
 def get_author_id(soup: Selector) -> str:
@@ -86,7 +86,7 @@ def get_description(soup: Selector) -> str | None:
     description = find_tag_opt(
         find_tag(soup, "div", {"data-testid": "description"}), "span"
     )
-    return description.text if description else None
+    return get_text(description) if description else None
 
 
 def get_title(soup: Selector) -> str:

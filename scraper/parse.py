@@ -10,6 +10,18 @@ from typing import Any
 from scrapling.parser import Selector
 
 
+def get_text(node: Selector) -> str:
+    """Recursively extract all text content from *node*.
+
+    Scrapling's ``Selector.text`` only returns the element's *direct* text
+    (the first text node), which is empty for elements whose content lives
+    inside child tags like ``<b>`` or ``<span>``.  This helper uses lxml's
+    ``text_content()`` to collect text from all descendant nodes — matching
+    the behaviour callers expect from BeautifulSoup's ``.text``.
+    """
+    return node._root.text_content()
+
+
 class ElementNotFound(Exception):
     pass
 

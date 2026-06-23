@@ -8,14 +8,16 @@ logged-in, so parser tests pin both. Refresh them with
 
 Two helpers cover everything:
 
-- ``soup(name)`` parses a fixture into BeautifulSoup — for testing pure parsers.
-- ``mock_get_soup({url_substring: fixture_name})`` replaces ``http.get_soup`` so
-  orchestrator functions receive fixture soups keyed by URL, with no network.
+- ``soup(name)`` parses a fixture into a scrapling ``Selector`` — for testing
+  pure parsers.
+- ``mock_get_soup({url_substring: fixture_name})`` replaces ``http.get_soup``
+  so orchestrator functions receive fixture selectors keyed by URL, with no
+  network.
 """
 
 from pathlib import Path
 
-from bs4 import BeautifulSoup
+from scrapling.parser import Selector
 import pytest
 
 from scraper import author
@@ -23,23 +25,20 @@ from scraper import output
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-
 def _soup(name):
-    return BeautifulSoup((FIXTURES / name).read_text(encoding="utf-8"), "html.parser")
-
+    return Selector(content=(FIXTURES / name).read_text(encoding="utf-8"))
 
 @pytest.fixture
 def soup():
-    """Return a loader that parses a fixture file into BeautifulSoup."""
+    """Return a loader that parses a fixture file into a scrapling Selector."""
     return _soup
-
 
 @pytest.fixture
 def mock_get_soup(monkeypatch):
     """Map a URL substring to a fixture, returned in place of a real fetch."""
 
     def install(url_map):
-        async def fake(url):
+        async def fake(url, **kwargs):
             for substring, name in url_map.items():
                 if substring in url:
                     return _soup(name)
@@ -48,7 +47,6 @@ def mock_get_soup(monkeypatch):
         monkeypatch.setattr("scraper.http.get_soup", fake)
 
     return install
-
 
 @pytest.fixture(autouse=True)
 def _clear_author_cache():

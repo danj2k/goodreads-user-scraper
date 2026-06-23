@@ -8,7 +8,7 @@ from typing import Any
 from scrapling.parser import Selector
 
 from scraper import books, http, output
-from scraper.parse import ElementNotFound, find_tag
+from scraper.parse import ElementNotFound, find_tag, get_text
 
 PER_PAGE = 100
 
@@ -68,7 +68,7 @@ def get_dates_read(book_row: Selector) -> list[str]:
     )
     date_arr = []
     for date in dates:
-        date_text = date.text.strip().split("\n")[0].strip()
+        date_text = get_text(date).strip().split("\n")[0].strip()
         if date_text and date_text != "not set":
             date_arr += [date_text]
     return date_arr

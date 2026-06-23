@@ -38,3 +38,9 @@ The `scraper/output.py` module provides a thin abstraction over terminal output,
 - `Progress(description, total)` — context manager; simple counter in quiet mode, rich progress bar with spinner in interactive mode.
 
 This module is imported by `__main__.py`, `user.py`, and `shelves.py`. In quiet mode, no *rich* objects are created, so the entire rich dependency is effectively unused — making the output safe for piping to files, cron logs, or other non-terminal consumers.
+
+## Scrapling `.text` vs BeautifulSoup `.text`
+
+During the conversion from BeautifulSoup to scrapling, a subtle difference in `.text` behaviour was discovered. BeautifulSoup's `.text` recursively concatenates all descendant text nodes. Scrapling's `Selector.text` only returns the element's *direct* text (the first text node), which is empty when content lives inside child tags.
+
+The `get_text()` helper in `scraper/parse.py` bridges this gap by delegating to lxml's `text_content()`, which recursively collects all text — matching the BeautifulSoup behaviour that the parser functions depend on. It is used in `get_description` (books.py), `get_author_description` (author.py), and `get_dates_read` (shelves.py) — the three places where elements contain nested markup. All other `.text` usages in the codebase are on leaf elements (text-only spans, headings, etc.) where scrapling's `.text` works correctly.

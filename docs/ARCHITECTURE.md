@@ -16,7 +16,7 @@ Bridges interactive and non-interactive (quiet) modes. In interactive mode, dele
 Manages the two `scrapling` async browser sessions. Provides `get_soup()` (parsed HTML). Handles retry with exponential back-off, Retry-After parsing, auth-failure detection, and redirects scrapling's verbose logging to a file (interactive) or stdout (quiet mode).
 
 ### `scraper/parse.py` — DOM helpers
-Thin wrappers around scrapling's `Selector.find()` that narrow `Selector | None` to `Selector` with a clear error on miss (`ElementNotFound`). Also handles the `class` → `class_` keyword mapping.
+Thin wrappers around scrapling's `Selector.find()` that narrow `Selector | None` to `Selector` with a clear error on miss (`ElementNotFound`). Also handles the `class` → `class_` keyword mapping. Provides `get_text()` for recursive text extraction — scrapling's `.text` only returns direct text content, which is empty for elements with nested tags like `<b>` or `<span>`. `get_text()` uses lxml's `text_content()` to match the recursive behaviour callers expect from BeautifulSoup.
 
 ### `scraper/user.py` — User profile
 Scrapes the user profile page for name, rating count, average rating, and review count. Writes `user.json`.

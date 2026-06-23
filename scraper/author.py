@@ -5,7 +5,7 @@ from typing import Any
 from scrapling.parser import Selector
 
 from scraper import http
-from scraper.parse import find_tag, find_tag_opt
+from scraper.parse import find_tag, find_tag_opt, get_text
 
 # Concurrent callers wanting the same author await one shared fetch task.
 _tasks: dict[str, asyncio.Task[dict[str, Any]]] = {}
@@ -19,7 +19,7 @@ def get_id_number(author_id: str) -> str:
 
 def get_author_description(soup: Selector, id_number: str) -> str | None:
     cell = find_tag_opt(soup, "span", {"id": "freeTextauthor" + id_number})
-    return cell.text.strip() if cell else None
+    return get_text(cell).strip() if cell else None
 
 
 def get_author_image(soup: Selector, author_name: str) -> str | None:

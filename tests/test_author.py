@@ -7,7 +7,6 @@ AUTHOR_NAME = "Fyodor Dostoevsky"
 # Author parsers must work on both the logged-out and logged-in page.
 AUTHOR = ["author.html", "author_anon.html"]
 
-
 def test_get_id_number():
     assert author.get_id_number(AUTHOR_ID) == "3137322"
 
@@ -33,7 +32,6 @@ def test_get_author_image_missing(soup):
         is None
     )
 
-
 def test_get_author_description_missing(soup):
     assert (
         author.get_author_description(soup("author_no_image.html"), "2814983") is None
@@ -41,7 +39,6 @@ def test_get_author_description_missing(soup):
 
 
 # scrape_author orchestrator
-
 
 async def test_scrape_author_builds_record(mock_get_soup):
     mock_get_soup({"author/show": "author.html"})
@@ -58,7 +55,7 @@ async def test_scrape_author_builds_record(mock_get_soup):
 async def test_scrape_author_caches_by_id(monkeypatch, soup):
     fetches = []
 
-    async def fake_get_soup(url):
+    async def fake_get_soup(url, **kwargs):
         fetches.append(url)
         return soup("author.html")
 
@@ -74,7 +71,7 @@ async def test_scrape_author_caches_by_id(monkeypatch, soup):
 async def test_scrape_author_retries_after_transient_failure(monkeypatch, soup):
     calls = []
 
-    async def flaky(url):
+    async def flaky(url, **kwargs):
         calls.append(url)
         if len(calls) == 1:
             raise RuntimeError("transient")

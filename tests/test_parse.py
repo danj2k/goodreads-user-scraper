@@ -1,12 +1,10 @@
-from bs4 import BeautifulSoup
 import pytest
+from scrapling.parser import Selector
 
 from scraper.parse import ElementNotFound, find_tag, find_tag_opt
 
-
 def _soup(html):
-    return BeautifulSoup(html, "html.parser")
-
+    return Selector(content=html)
 
 def test_find_tag_returns_matching_tag():
     soup = _soup("<div><span id='x'>hi</span></div>")
@@ -25,4 +23,4 @@ def test_find_tag_opt_returns_none_when_missing():
 
 def test_find_tag_opt_returns_tag_when_present():
     tag = find_tag_opt(_soup("<div><a href='/x'>y</a></div>"), "a")
-    assert tag is not None and tag.get("href") == "/x"
+    assert tag is not None and tag.attrib.get("href") == "/x"

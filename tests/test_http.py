@@ -2,16 +2,14 @@ import asyncio
 
 import aiohttp
 import pytest
-from bs4 import BeautifulSoup
+from scrapling.parser import Selector
 
 from scraper import http
 
 # _detect_auth_failure only needs tiny hand-built HTML, so these tests skip fixtures.
 
-
 def make_soup(html):
-    return BeautifulSoup(html, "html.parser")
-
+    return Selector(content=html)
 
 def test_detects_third_party_sign_in_by_id():
     assert http._detect_auth_failure(
@@ -38,6 +36,12 @@ def test_clean_page_is_not_auth_failure():
 
 # get_soup retry/backoff — driven by a fake session so no network or real sleeps run.
 
+class _FakeCssResult:
+    """Minimal stub matching the ``Selectors.first`` interface used by _detect_auth_failure."""
+
+    def __init__(self, element):
+        self.first = element
+
 
 class _FakeResponse:
     def __init__(self, status, body="<html>ok</html>", headers=None, text_exc=None):
@@ -52,7 +56,7 @@ class _FakeResponse:
 
     def css(self, _selector):
         """Return a truthy stub — enough for _detect_auth_failure to work."""
-        return [True]
+        return _FakeCssResult(True)
 
     def raise_for_status(self):
         if self.status >= 400:
@@ -64,29 +68,19 @@ class _FakeResponse:
         return self._body
 
 
-class _FakeGet:
-    def __init__(self, step):
-        self._step = step
-
-    async def __aenter__(self):
-        if isinstance(self._step, Exception):
-            raise self._step
-        return self._step
-
-    async def __aexit__(self, *exc):
-        return False
-
-
 class _FakeSession:
-    """Yields one queued step (a response or an exception to raise) per get()."""
+    """Yields one queued step (a response or an exception to raise) per fetch()."""
 
     def __init__(self, steps):
         self._steps = list(steps)
         self.calls = 0
 
-    def fetch(self, url):
+    async def fetch(self, url):
         self.calls += 1
-        return _FakeGet(self._steps.pop(0))
+        step = self._steps.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return step
 
 
 @pytest.fixture
@@ -160,9 +154,8 @@ async def test_get_soup_retries_on_timeout_then_succeeds(fake_http):
     assert session.calls == 2
 
 
-async def test_get_soup_retries_on_payload_error_mid_body(fake_http):
-    broken = _FakeResponse(200, text_exc=aiohttp.ClientPayloadError("connection lost"))
-    session, sleeps = fake_http([broken, _FakeResponse(200)])
+async def test_get_soup_retries_on_connection_error_then_succeeds(fake_http):
+    session, sleeps = fake_http([ConnectionError("reset"), _FakeResponse(200)])
 
     response = await http.get_soup("https://x")
     assert response.html_content == "<html>ok</html>"
@@ -178,10 +171,11 @@ async def test_get_soup_raises_fetcherror_after_exhausting_retries(fake_http):
     assert len(sleeps) == http.MAX_RETRIES
 
 
-async def test_get_soup_does_not_retry_non_transient_4xx(fake_http):
+async def test_get_soup_wraps_non_transient_4xx_as_fetcherror(fake_http):
+    # Non-transient 4xx (e.g. 404) is wrapped in FetchError, not raw ClientResponseError.
     session, sleeps = fake_http([_FakeResponse(404)])
 
-    with pytest.raises(aiohttp.ClientResponseError):
+    with pytest.raises(http.FetchError):
         await http.get_soup("https://x")
     assert session.calls == 1
     assert sleeps == []
@@ -200,7 +194,6 @@ async def test_get_soup_honors_and_caps_retry_after(fake_http):
 
 SIGN_IN_PAGE = '<div id="third_party_sign_in"></div>'
 
-
 def test_autherror_is_a_plain_exception():
     assert issubclass(http.AuthError, Exception)
 
@@ -218,4 +211,4 @@ async def test_get_soup_skips_auth_check_without_cookie(fake_http, monkeypatch):
     monkeypatch.setattr(http, "_has_cookie", False)
 
     soup = await http.get_soup("https://x")
-    assert soup.select_one("div#third_party_sign_in") is not None
+    assert soup.css("div#third_party_sign_in").first is not None
