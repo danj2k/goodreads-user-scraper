@@ -98,17 +98,28 @@ def get_dates_read(book_row: Selector) -> list[str]:
     return date_arr
 
 
-async def collect_shelf_rows(user_id: str, shelf: str) -> list[Selector]:
+async def collect_shelf_rows(
+    user_id: str, shelf: str
+) -> tuple[list[Selector], set[str]]:
+    """Fetch every page of *shelf* and return (rows, exclusive_shelves).
+
+    The first page of every Goodreads shelf contains a ``<ul class="shelves">``
+    that flags which shelves are exclusive (``read``, ``to-read``, etc.).
+    We detect that once here so callers don't need a redundant re-fetch.
+    """
     rows: list[Selector] = []
+    exclusive: set[str] = set()
     page = 1
     while True:
         soup = await fetch_shelf_page(user_id, shelf, page)
+        if page == 1:
+            exclusive = detect_exclusive_shelves(soup)
         if soup.find("div", {"class": "greyText nocontent stacked"}):
             break
         body = find_tag(soup, "tbody", {"id": "booksBody"})
         rows.extend([child for child in body.children if child.tag == "tr"])
         page += 1
-    return rows
+    return rows, exclusive
 
 
 def _dedupe_books(
@@ -205,30 +216,23 @@ async def get_all_shelves(args: Namespace, profile: Selector | None = None) -> i
     with make_progress() as progress:
         task = progress.add_task("Finding shelves", total=len(shelf_names))
 
-        async def collect(shelf: str) -> tuple[str, list[Selector]]:
-            rows = await collect_shelf_rows(user_id, shelf)
+        async def collect(shelf: str) -> tuple[str, list[Selector], set[str]]:
+            rows, exclusive = await collect_shelf_rows(user_id, shelf)
             progress.advance(task)
-            return shelf, rows
+            return shelf, rows, exclusive
 
         per_shelf = await asyncio.gather(*(collect(shelf) for shelf in shelf_names))
     console.print(f"📚  {len(shelf_names)} shelves")
 
-    books_by_id = _dedupe_books(per_shelf)
+    books_by_id = _dedupe_books([(shelf, rows) for shelf, rows, _ in per_shelf])
 
-    # Detect which shelves are exclusive from the first non-empty
-    # ``&print=true`` shelf page we already fetched (which contains a
-    # ``<ul class="shelves">`` listing every shelf with exclusive flags).
-    exclusive_shelves: set[str] | None = None
-    for shelf_name, shelf_rows in per_shelf:
-        if shelf_rows:
-            shelf_url = (
-                f"https://www.goodreads.com/review/list/{user_id}"
-                f"?shelf={shelf_name}&page=1&per_page={PER_PAGE}&print=true"
-            )
-            shelf_page = await http.get_soup(shelf_url)
-            exclusive_shelves = detect_exclusive_shelves(shelf_page)
-            if exclusive_shelves:
-                break
+    # Merge exclusive shelf sets detected during collection (from the first
+    # page of each shelf, which contains a <ul class="shelves"> listing
+    # every shelf with exclusive flags).  No re-fetch needed.
+    all_exclusive: set[str] = set()
+    for _, _, exclusive in per_shelf:
+        all_exclusive.update(exclusive)
+    exclusive_shelves: set[str] | None = all_exclusive or None
     if exclusive_shelves:
         console.print(
             f"🔒  Exclusive shelves: {', '.join(sorted(exclusive_shelves))}"

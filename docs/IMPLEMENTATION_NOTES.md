@@ -4,6 +4,8 @@
 
 Goodreads classifies certain shelves as "exclusive" (read, to-read, currently-reading, did-not-finish). A book can only belong to one exclusive shelf at a time. The detection works by examining `<li>` elements in the `&print=true` shelf page's `<ul class="shelves">` list: those with class `exclusive` identify exclusive shelves.
 
+Detection happens inside `collect_shelf_rows` on the first page of each shelf, which avoids a redundant re-fetch (the same `<ul class="shelves">` is present on every page). The sets from all shelves are merged in `get_all_shelves` after collection completes.
+
 The `exclusive_shelf` value written to each book's JSON is derived from the intersection of the book's actual shelves and the exclusive shelf set, taking the first alphabetically when there's ambiguity.
 
 ## Shelf row extraction

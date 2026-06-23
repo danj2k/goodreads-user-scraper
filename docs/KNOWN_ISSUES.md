@@ -2,13 +2,7 @@
 
 ## Bugs
 
-### 1. Redundant HTTP requests for exclusive shelf detection (shelves.py, lines 222–231)
-
-After `collect_shelf_rows` has already fetched all shelf pages, `get_all_shelves` re-fetches a shelf page solely to detect exclusive shelves. This causes every book to be fetched twice from the same shelf URL (once in `collect_shelf_rows`, once here). It wastes bandwidth and risks triggering rate limits.
-
-**Fix:** The exclusive shelf info is already present in the pages fetched by `collect_shelf_rows`. Either capture it there, or detect exclusives from the first page of the first non-empty shelf during the initial collection pass.
-
-### 2. Broad exception swallowing in deduplication (shelves.py, line 130)
+### 1. Broad exception swallowing in deduplication (shelves.py, line 141)
 
 In `_dedupe_books`, the `except Exception: continue` silently discards all errors when parsing a shelf row — including unexpected bugs like `TypeError`, `KeyError`, or `ImportError`. Only `ElementNotFound` (from missing expected DOM elements) should be caught here.
 
