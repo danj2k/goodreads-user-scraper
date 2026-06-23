@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
     "Topic :: Utilities",
 ]
-dependencies = ["beautifulsoup4", "aiohttp", "rich"]
+dependencies = ["scrapling[all]", "rich"]
 dynamic = ["version"]
 
 [project.optional-dependencies]

@@ -13,7 +13,7 @@ console = Console()
 
 
 async def scrape_user(args: argparse.Namespace, cookie: str | None) -> int:
-    http.init_session(cookie)
+    await http.init_session(cookie)
     try:
         profile = await user.get_user_info(args)
         fetch_failures = await shelves.get_all_shelves(args, profile)

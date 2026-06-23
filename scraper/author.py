@@ -2,7 +2,7 @@ import asyncio
 import re
 from typing import Any
 
-from bs4 import BeautifulSoup
+from scrapling.parser import Selector
 
 from scraper import http
 from scraper.parse import find_tag, find_tag_opt
@@ -17,16 +17,16 @@ def get_id_number(author_id: str) -> str:
     return match.group()
 
 
-def get_author_description(soup: BeautifulSoup, id_number: str) -> str | None:
+def get_author_description(soup: Selector, id_number: str) -> str | None:
     cell = find_tag_opt(soup, "span", {"id": "freeTextauthor" + id_number})
     return cell.text.strip() if cell else None
 
 
-def get_author_image(soup: BeautifulSoup, author_name: str) -> str | None:
+def get_author_image(soup: Selector, author_name: str) -> str | None:
     cell = find_tag_opt(soup, "img", {"alt": author_name, "itemprop": "image"})
     if cell is None:
         return None
-    src = cell.get("src")
+    src = cell.attrib.get("src")
     return src if isinstance(src, str) else None
 
 
@@ -44,7 +44,7 @@ async def scrape_author(author_id: str) -> dict[str, Any]:
 
 async def _scrape_author(author_id: str) -> dict[str, Any]:
     url = "https://www.goodreads.com/author/show/" + author_id
-    soup = await http.get_soup(url)
+    soup = await http.get_soup(url, stealthy=True)
 
     author_name = find_tag(soup, "span", {"itemprop": "name"}).text.strip()
     id_number = get_id_number(author_id)

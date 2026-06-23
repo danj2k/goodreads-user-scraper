@@ -1,56 +1,107 @@
-"""Shared async HTTP session. Optionally carries a Goodreads cookie."""
+"""Shared async fetching via scrapling sessions. Optionally carries a Goodreads cookie."""
 
 import asyncio
+import logging
 import email.utils
 import random
 from datetime import datetime, timezone
+from typing import Any
 
-import aiohttp
-from bs4 import BeautifulSoup
+from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
+from scrapling.parser import Selector
 
-DEFAULT_TIMEOUT = 30
-MAX_CONCURRENCY = 32
 MAX_RETRIES = 4
 BACKOFF_BASE = 1.0  # seconds
 MAX_BACKOFF = 30.0  # cap per sleep, also caps a server-sent Retry-After
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
-)
 
-_session: aiohttp.ClientSession | None = None
-_semaphore: asyncio.Semaphore | None = None
+_GOODREADS_DOMAIN = ".goodreads.com"
+
+_http_session: AsyncDynamicSession | None = None
+_LOG_FILE = "scrapling_fetch.log"
+
+
+def _redirect_scrapling_logging() -> None:
+    """Send scrapling's verbose output to a file instead of stderr."""
+    logger = logging.getLogger("scrapling")
+    for handler in list(logger.handlers):
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, logging.FileHandler
+        ):
+            logger.removeHandler(handler)
+    logger.addHandler(logging.FileHandler(_LOG_FILE))
+    logger.setLevel(logging.DEBUG)
+
+
+_stealthy_session: AsyncStealthySession | None = None
 _has_cookie: bool = False
 
 
-def init_session(cookie: str | None) -> None:
-    global _session, _semaphore, _has_cookie
-    headers = {"User-Agent": USER_AGENT}
+def _parse_cookie_string(cookie: str) -> list[dict[str, str]]:
+    """Convert a raw Cookie header value into Playwright cookie dicts.
+
+    Playwright's ``browserContext.add_cookies()`` requires a list of
+    dicts with ``name``, ``value``, ``domain`` and ``path`` keys.
+    """
+    cookies: list[dict[str, str]] = []
+    for pair in cookie.split(";"):
+        pair = pair.strip()
+        if "=" not in pair:
+            continue
+        name, _, value = pair.partition("=")
+        cookies.append({
+            "name": name.strip(),
+            "value": value.strip(),
+            "domain": _GOODREADS_DOMAIN,
+            "path": "/",
+        })
+    return cookies
+
+
+async def init_session(cookie: str | None) -> None:
+    """Launch the two Playwright browser sessions."""
+    global _http_session, _stealthy_session, _has_cookie
     _has_cookie = bool(cookie)
-    if cookie:
-        headers["Cookie"] = cookie
-    _session = aiohttp.ClientSession(
-        headers=headers,
-        timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
-        cookie_jar=aiohttp.DummyCookieJar(),
+    pw_cookies = _parse_cookie_string(cookie) if cookie else None
+
+    session_kwargs: dict[str, Any] = dict(
+        headless=True, network_idle=True, google_search=False,
     )
-    _semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+    if pw_cookies is not None:
+        session_kwargs["cookies"] = pw_cookies
+
+    _redirect_scrapling_logging()
+
+    # Shelves don't appear to need bot protection — use a standard session.
+    _http_session = AsyncDynamicSession(**session_kwargs)
+    await _http_session.__aenter__()
+
+    # Individual book/author pages do have bot protection.
+    _stealthy_session = AsyncStealthySession(**session_kwargs)
+    await _stealthy_session.__aenter__()
 
 
 async def close_session() -> None:
-    global _session
-    if _session is not None:
-        await _session.close()
-        _session = None
+    """Shut down both browser sessions."""
+    global _http_session, _stealthy_session
+    if _http_session is not None:
+        await _http_session.__aexit__(None, None, None)
+        _http_session = None
+    if _stealthy_session is not None:
+        await _stealthy_session.__aexit__(None, None, None)
+        _stealthy_session = None
 
 
 def has_cookie() -> bool:
     return _has_cookie
 
 
-def _detect_auth_failure(soup: BeautifulSoup, body: str) -> bool:
-    if soup.select_one("div#third_party_sign_in, div.third_party_sign_in"):
+# ---------------------------------------------------------------------------
+# Auth / error detection
+# ---------------------------------------------------------------------------
+
+
+def _detect_auth_failure(response: Selector, body: str) -> bool:
+    if response.css("div#third_party_sign_in, div.third_party_sign_in").first:
         return True
     if "wrong with your Goodreads cookie" in body:
         return True
@@ -58,10 +109,13 @@ def _detect_auth_failure(soup: BeautifulSoup, body: str) -> bool:
 
 
 class AuthError(Exception):
-    # Plain Exception, not sys.exit: a SystemExit escaping a gathered task prints a traceback.
+    # Plain Exception, not sys.exit: a SystemExit escaping a gathered task
+    # prints a traceback.
     def __init__(self) -> None:
         super().__init__(
-            "Cookie appears invalid or expired. Re-grab the Cookie header value from your browser DevTools and try again."
+            "Cookie appears invalid or expired. "
+            "Re-grab the Cookie header value from your browser DevTools and "
+            "try again."
         )
 
 
@@ -73,8 +127,13 @@ class FetchError(Exception):
         )
 
 
+# ---------------------------------------------------------------------------
+# Retry / back-off helpers
+# ---------------------------------------------------------------------------
+
+
 def _is_transient_status(status: int) -> bool:
-    return status == 429 or 500 <= status < 600
+    return status == 202 or status == 429 or 500 <= status < 600
 
 
 def _parse_retry_after(header: str | None) -> float | None:
@@ -95,36 +154,44 @@ def _backoff(attempt: int) -> float:
     return random.uniform(0, min(MAX_BACKOFF, BACKOFF_BASE * 2**attempt))
 
 
+# ---------------------------------------------------------------------------
+# Fetching
+# ---------------------------------------------------------------------------
+
+
 async def get_html(url: str) -> str:
+    """Fetch *url* and return its raw HTML text."""
+    resp = await get_soup(url)
+    return resp.html_content
+
+
+async def get_soup(url: str, *, stealthy: bool = False) -> Selector:
+    """Fetch *url* and return a parsed :class:`Selector`.
+
+    When *stealthy* is ``True`` the request goes through the anti-bot
+    session; otherwise the lighter-weight dynamic session is used.
+    """
     assert (
-        _session is not None and _semaphore is not None
+        _http_session is not None and _stealthy_session is not None
     ), "init_session() must be called first"
-    # Retries sleep while holding the semaphore so throttling collapses concurrency.
-    async with _semaphore:
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                async with _session.get(url) as response:
-                    if not _is_transient_status(response.status):
-                        response.raise_for_status()
-                        return await response.text()
-                    delay = _parse_retry_after(response.headers.get("Retry-After"))
-            except (
-                asyncio.TimeoutError,
-                aiohttp.ClientConnectionError,
-                aiohttp.ClientPayloadError,
-            ):
-                delay = None
-            if attempt == MAX_RETRIES:
-                break
-            await asyncio.sleep(
-                min(delay, MAX_BACKOFF) if delay is not None else _backoff(attempt)
-            )
+    session = _stealthy_session if stealthy else _http_session
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            response = await session.fetch(url)
+            if not _is_transient_status(response.status):
+                if response.status >= 400:
+                    raise FetchError(url)
+                body = response.html_content
+                if _has_cookie and _detect_auth_failure(response, body):
+                    raise AuthError()
+                return response
+            delay = _parse_retry_after(response.headers.get("Retry-After"))
+        except (TimeoutError, ConnectionError, OSError):
+            delay = None
+        if attempt == MAX_RETRIES:
+            break
+        await asyncio.sleep(
+            min(delay, MAX_BACKOFF) if delay is not None else _backoff(attempt)
+        )
     raise FetchError(url)
-
-
-async def get_soup(url: str) -> BeautifulSoup:
-    html = await get_html(url)
-    soup = BeautifulSoup(html, "html.parser")
-    if _has_cookie and _detect_auth_failure(soup, html):
-        raise AuthError()
-    return soup

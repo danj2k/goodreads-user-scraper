@@ -2,7 +2,7 @@ from argparse import Namespace
 import json
 import re
 
-from bs4 import BeautifulSoup
+from scrapling.parser import Selector
 from rich.console import Console
 
 from scraper import http
@@ -11,28 +11,28 @@ from scraper.parse import find_tag
 console = Console()
 
 
-def get_user_name(soup: BeautifulSoup) -> str:
+def get_user_name(soup: Selector) -> str:
     return (
         find_tag(soup, id="profileNameTopHeading").text.strip().split("\n")[0].strip()
     )
 
 
-def get_num_ratings(soup: BeautifulSoup) -> int:
+def get_num_ratings(soup: Selector) -> int:
     container = find_tag(soup, "div", attrs={"class": "profilePageUserStatsInfo"})
     return int(re.findall(r"\d+", find_tag(container, "a").text)[0])
 
 
-def get_avg_rating(soup: BeautifulSoup) -> float:
+def get_avg_rating(soup: Selector) -> float:
     container = find_tag(soup, "div", attrs={"class": "profilePageUserStatsInfo"})
     return float(re.findall(r"\d*\.?\d+", container.find_all("a")[1].text)[0])
 
 
-def get_num_reviews(soup: BeautifulSoup) -> int:
+def get_num_reviews(soup: Selector) -> int:
     container = find_tag(soup, "div", attrs={"class": "profilePageUserStatsInfo"})
     return int(re.findall(r"\d+", container.find_all("a")[2].text)[0])
 
 
-async def get_user_info(args: Namespace) -> BeautifulSoup | None:
+async def get_user_info(args: Namespace) -> Selector | None:
     if args.skip_user_info:
         return None
 

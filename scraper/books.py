@@ -2,20 +2,20 @@ import re
 from argparse import Namespace
 from typing import Any
 
-from bs4 import BeautifulSoup
+from scrapling.parser import Selector
 
 from scraper import author, http
 from scraper.parse import find_tag, find_tag_opt
 
 
-def get_author_id(soup: BeautifulSoup) -> str:
+def get_author_id(soup: Selector) -> str:
     container = find_tag(soup, "div", {"class": "ContributorLinksList"})
-    href = find_tag(container, "a").get("href")
+    href = find_tag(container, "a").attrib.get("href")
     assert isinstance(href, str)
     return href.split("/")[-1]
 
 
-def get_genres(soup: BeautifulSoup) -> list[str] | None:
+def get_genres(soup: Selector) -> list[str] | None:
     genres_container = find_tag_opt(soup, "div", {"data-testid": "genresList"})
     if genres_container is None:
         return None
@@ -23,14 +23,14 @@ def get_genres(soup: BeautifulSoup) -> list[str] | None:
     return [find_tag(link, "span").text for link in genre_links]
 
 
-def get_average_rating(soup: BeautifulSoup) -> float | None:
+def get_average_rating(soup: Selector) -> float | None:
     average_rating = find_tag(
         soup, "div", {"class": "RatingStatistics__rating"}
     ).text.strip()
     return float(average_rating) if average_rating else None
 
 
-def get_num_reviews(soup: BeautifulSoup) -> int | None:
+def get_num_reviews(soup: Selector) -> int | None:
     num_reviews = find_tag_opt(soup, "span", {"data-testid": "reviewsCount"})
     if num_reviews is None:
         return None
@@ -39,7 +39,7 @@ def get_num_reviews(soup: BeautifulSoup) -> int | None:
     return int(match.group(1).replace(",", ""))
 
 
-def get_num_ratings(soup: BeautifulSoup) -> int | None:
+def get_num_ratings(soup: Selector) -> int | None:
     num_ratings = find_tag_opt(soup, "span", {"data-testid": "ratingsCount"})
     if num_ratings is None:
         return None
@@ -48,7 +48,7 @@ def get_num_ratings(soup: BeautifulSoup) -> int | None:
     return int(match.group(1).replace(",", ""))
 
 
-def get_num_pages(soup: BeautifulSoup) -> int | None:
+def get_num_pages(soup: Selector) -> int | None:
     container = find_tag_opt(soup, "p", {"data-testid": "pagesFormat"})
     if container is None:
         return None
@@ -56,40 +56,40 @@ def get_num_pages(soup: BeautifulSoup) -> int | None:
     return int(match.group(1).replace(",", "")) if match else None
 
 
-def get_year_first_published(soup: BeautifulSoup) -> str | None:
+def get_year_first_published(soup: Selector) -> str | None:
     info = find_tag_opt(soup, "p", {"data-testid": "publicationInfo"})
     if info is None:
         return None
-    text = info.string
+    text = info.text
     assert text is not None
     match = re.search(r"([0-9]{3,4})", text)
     assert match is not None
     return match.group(1)
 
 
-def get_series_uri(soup: BeautifulSoup) -> str | None:
+def get_series_uri(soup: Selector) -> str | None:
     title_section = find_tag(soup, "h1", {"data-testid": "bookTitle"}).parent
     assert title_section is not None
     series_container = find_tag_opt(title_section, "h3")
     if series_container is None:
         return None
-    href = find_tag(series_container, "a").get("href")
+    href = find_tag(series_container, "a").attrib.get("href")
     return href if isinstance(href, str) else None
 
 
-def get_image(soup: BeautifulSoup) -> str | None:
-    src = find_tag(soup, "img", {"class": "ResponsiveImage"}).get("src")
+def get_image(soup: Selector) -> str | None:
+    src = find_tag(soup, "img", {"class": "ResponsiveImage"}).attrib.get("src")
     return src if isinstance(src, str) else None
 
 
-def get_description(soup: BeautifulSoup) -> str | None:
+def get_description(soup: Selector) -> str | None:
     description = find_tag_opt(
         find_tag(soup, "div", {"data-testid": "description"}), "span"
     )
     return description.text if description else None
 
 
-def get_title(soup: BeautifulSoup) -> str:
+def get_title(soup: Selector) -> str:
     return " ".join(find_tag(soup, "h1", {"data-testid": "bookTitle"}).text.split())
 
 
@@ -101,7 +101,7 @@ def get_id(book_id: str) -> str:
 
 async def scrape_book(book_id: str, args: Namespace) -> dict[str, Any]:
     url = "https://www.goodreads.com/book/show/" + book_id
-    soup = await http.get_soup(url)
+    soup = await http.get_soup(url, stealthy=True)
 
     book: dict[str, Any] = {
         "book_id_title": book_id,
