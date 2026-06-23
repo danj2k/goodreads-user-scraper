@@ -18,7 +18,7 @@ from rich.progress import (
 )
 
 from scraper import books, http
-from scraper.parse import find_tag
+from scraper.parse import ElementNotFound, find_tag
 
 PER_PAGE = 100
 console = Console()
@@ -138,8 +138,8 @@ def _dedupe_books(
                         "dates_read": get_dates_read(row),
                     }
                     books_by_id[book_id] = entry
-            except Exception:
-                continue  # skip a malformed row
+            except ElementNotFound:
+                continue  # skip a malformed row (missing expected DOM elements)
             if shelf not in entry["shelves"]:
                 entry["shelves"].append(shelf)
     return books_by_id

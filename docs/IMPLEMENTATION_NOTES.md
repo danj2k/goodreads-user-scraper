@@ -16,6 +16,8 @@ Shelf pages are HTML tables. Book IDs are extracted from the "title" column's `<
 
 Books appear on multiple shelves (e.g., "read" and "fiction"). The `_dedupe_books` function deduplicates by book ID, merging shelf lists. The first occurrence's rating and read dates are kept; subsequent occurrences only add new shelf names. This is safe because rating and read dates are the same regardless of which shelf the row was extracted from.
 
+Error handling during deduplication catches only `ElementNotFound` (from `scraper.parse`). A shelf row with missing expected DOM elements is skipped silently — this is a known possibility when Goodreads serves slightly different HTML for some books. Any other exception (`AssertionError`, `TypeError`, etc.) indicates a programming bug and is allowed to propagate.
+
 ## Incremental book updates
 
 When a book's JSON file already exists, `process_book` reads it and only appends new shelf names from the current shelf data. The book's detailed metadata (title, description, genres, etc.) is not re-fetched. This means metadata changes on Goodreads won't be reflected without deleting the book file first.

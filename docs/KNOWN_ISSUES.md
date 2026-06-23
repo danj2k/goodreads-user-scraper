@@ -1,12 +1,9 @@
 # Known Issues
 
-## Bugs
+## Resolved
 
-### 1. Broad exception swallowing in deduplication (shelves.py, line 141)
-
-In `_dedupe_books`, the `except Exception: continue` silently discards all errors when parsing a shelf row — including unexpected bugs like `TypeError`, `KeyError`, or `ImportError`. Only `ElementNotFound` (from missing expected DOM elements) should be caught here.
-
-**Fix:** Narrow to `except (ElementNotFound, AssertionError, AttributeError):` or similar.
+### 1. Broad exception swallowing in deduplication
+Narrowed `except Exception` to `except ElementNotFound` in `_dedupe_books` (shelves.py). Programming bugs (`AssertionError`, `TypeError`, etc.) now propagate instead of being silently swallowed.
 
 ## Limitations
 
