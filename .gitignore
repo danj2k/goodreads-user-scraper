@@ -11,3 +11,5 @@ goodreads_user_scraper.egg-info
 .pytest_cache
 .coverage
 docs/superpowers/plans/
+scrapling_fetch.log
+uv.lock
