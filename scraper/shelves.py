@@ -6,22 +6,11 @@ import re
 from typing import Any
 
 from scrapling.parser import Selector
-from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 
-from scraper import books, http
+from scraper import books, http, output
 from scraper.parse import ElementNotFound, find_tag
 
 PER_PAGE = 100
-console = Console()
 
 
 def detect_exclusive_shelves(soup: Selector) -> set[str]:
@@ -45,19 +34,6 @@ def detect_exclusive_shelves(soup: Selector) -> set[str]:
             exclusive.add(li.attrib.get("alt",""))
 
     return exclusive
-
-
-def make_progress() -> Progress:
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True,
-    )
 
 
 async def fetch_shelf_page(user_id: str, shelf: str, page: int) -> Selector:
@@ -177,7 +153,7 @@ async def process_book(
     except http.AuthError:
         raise  # a bad cookie dooms the whole run, not just this book
     except Exception as e:
-        console.print(f"🟡  Skipped {book_id}: {e}")
+        output.log_warn(f"Skipped {book_id}: {e}")
         return isinstance(e, http.FetchError)
 
 
@@ -186,8 +162,8 @@ async def get_all_shelves(args: Namespace, profile: Selector | None = None) -> i
         return 0
 
     if not http.has_cookie():
-        print(
-            "🟡  Skipping shelves: Goodreads requires login to view shelf data.\n"
+        output.log_warn(
+            "Skipping shelves: Goodreads requires login to view shelf data.\n"
             "    To scrape shelves, provide your Goodreads session cookie via one of:\n"
             '      --cookie "<cookie string>"\n'
             "      GOODREADS_COOKIE=<cookie string>   (environment variable)\n"
@@ -213,16 +189,14 @@ async def get_all_shelves(args: Namespace, profile: Selector | None = None) -> i
         assert match is not None
         shelf_names.append(match.group(1))
 
-    with make_progress() as progress:
-        task = progress.add_task("Finding shelves", total=len(shelf_names))
-
+    with output.Progress("Finding shelves", len(shelf_names)) as progress:
         async def collect(shelf: str) -> tuple[str, list[Selector], set[str]]:
             rows, exclusive = await collect_shelf_rows(user_id, shelf)
-            progress.advance(task)
+            progress.advance()
             return shelf, rows, exclusive
 
         per_shelf = await asyncio.gather(*(collect(shelf) for shelf in shelf_names))
-    console.print(f"📚  {len(shelf_names)} shelves")
+    output.log_info(f"{len(shelf_names)} shelves")
 
     books_by_id = _dedupe_books([(shelf, rows) for shelf, rows, _ in per_shelf])
 
@@ -234,23 +208,21 @@ async def get_all_shelves(args: Namespace, profile: Selector | None = None) -> i
         all_exclusive.update(exclusive)
     exclusive_shelves: set[str] | None = all_exclusive or None
     if exclusive_shelves:
-        console.print(
-            f"🔒  Exclusive shelves: {', '.join(sorted(exclusive_shelves))}"
+        output.log_info(
+            f"Exclusive shelves: {', '.join(sorted(exclusive_shelves))}"
         )
 
-    with make_progress() as progress:
-        task = progress.add_task("Scraping books", total=len(books_by_id))
-
+    with output.Progress("Scraping books", len(books_by_id)) as progress:
         async def run(book_id: str, info: dict[str, Any]) -> bool:
             failed = await process_book(
                 book_id, info, args, output_dir, exclusive_shelves=exclusive_shelves
             )
-            progress.advance(task)
+            progress.advance()
             return failed
 
         results = await asyncio.gather(
             *(run(book_id, info) for book_id, info in books_by_id.items())
         )
 
-    console.print(f"📖  {len(books_by_id)} books")
+    output.log_info(f"{len(books_by_id)} books")
     return sum(results)

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import email.utils
 import random
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,15 +21,26 @@ _http_session: AsyncDynamicSession | None = None
 _LOG_FILE = "scrapling_fetch.log"
 
 
-def _redirect_scrapling_logging() -> None:
-    """Send scrapling's verbose output to a file instead of stderr."""
+def _redirect_scrapling_logging(quiet: bool = False) -> None:
+    """Route scrapling's verbose output.
+
+    In interactive mode the output goes to a file to keep the terminal clean.
+    In quiet mode it goes to stdout so cron redirection captures it.
+    """
     logger = logging.getLogger("scrapling")
     for handler in list(logger.handlers):
         if isinstance(handler, logging.StreamHandler) and not isinstance(
             handler, logging.FileHandler
         ):
             logger.removeHandler(handler)
-    logger.addHandler(logging.FileHandler(_LOG_FILE))
+    if quiet:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(name)s %(levelname)s: %(message)s")
+        )
+    else:
+        handler = logging.FileHandler(_LOG_FILE)
+    logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
 
 
@@ -57,7 +69,7 @@ def _parse_cookie_string(cookie: str) -> list[dict[str, str]]:
     return cookies
 
 
-async def init_session(cookie: str | None) -> None:
+async def init_session(cookie: str | None, *, quiet: bool = False) -> None:
     """Launch the two Playwright browser sessions."""
     global _http_session, _stealthy_session, _has_cookie
     _has_cookie = bool(cookie)
@@ -69,7 +81,7 @@ async def init_session(cookie: str | None) -> None:
     if pw_cookies is not None:
         session_kwargs["cookies"] = pw_cookies
 
-    _redirect_scrapling_logging()
+    _redirect_scrapling_logging(quiet=quiet)
 
     # Shelves don't appear to need bot protection — use a standard session.
     _http_session = AsyncDynamicSession(**session_kwargs)

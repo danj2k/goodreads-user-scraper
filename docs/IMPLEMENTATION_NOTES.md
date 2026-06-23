@@ -24,4 +24,17 @@ When a book's JSON file already exists, `process_book` reads it and only appends
 
 ## Scrapling logging redirect
 
-Scrapling logs verbosely to stderr by default. The `_redirect_scrapling_logging` function removes StreamHandlers from the "scrapling" logger and adds a FileHandler writing to `scrapling_fetch.log`. This keeps the user's terminal clean while preserving debug information for troubleshooting.
+Scrapling logs verbosely to stderr by default. The `_redirect_scrapling_logging` function removes StreamHandlers from the "scrapling" logger and routes output depending on mode:
+
+- **Interactive mode** (default): adds a FileHandler writing to `scrapling_fetch.log`. This keeps the user's terminal clean while preserving debug information for troubleshooting.
+- **Quiet mode** (`--quiet`): adds a StreamHandler writing to stdout with a timestamped format (`%(asctime)s %(name)s %(levelname)s: %(message)s`). This ensures scrapling's logs are captured by whatever redirection is used (e.g. cron output capture).
+
+## Output abstraction module
+
+The `scraper/output.py` module provides a thin abstraction over terminal output, selected at startup via `output.init(quiet=...)`. It exposes:
+
+- `log()`, `log_info()`, `log_warn()`, `log_error()` — plain-text messages in quiet mode (with `[INFO]`/`[WARN]`/`[ERROR]` prefixes), rich-styled messages in interactive mode.
+- `status(msg)` — context manager; yields immediately in quiet mode (after printing one log line), shows a rich spinner in interactive mode.
+- `Progress(description, total)` — context manager; simple counter in quiet mode, rich progress bar with spinner in interactive mode.
+
+This module is imported by `__main__.py`, `user.py`, and `shelves.py`. In quiet mode, no *rich* objects are created, so the entire rich dependency is effectively unused — making the output safe for piping to files, cron logs, or other non-terminal consumers.

@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 import pytest
 
 from scraper import author
+from scraper import output
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -53,3 +54,9 @@ def mock_get_soup(monkeypatch):
 def _clear_author_cache():
     """scrape_author memoizes in a module global; reset it so tests stay isolated."""
     author._tasks.clear()
+
+
+@pytest.fixture(autouse=True)
+def _init_output():
+    """Initialise the output module in quiet mode for every test run."""
+    output.init(quiet=True)

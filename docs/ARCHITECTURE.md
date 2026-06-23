@@ -7,10 +7,13 @@ A single-process async Python CLI. Two Playwright browser sessions are launched 
 ## Components
 
 ### `scraper/__main__.py` — Entry point
-CLI argument parsing, cookie resolution (CLI flag, env var, or file), orchestration of user-info and shelf scraping, and top-level error handling.
+CLI argument parsing (`--quiet` / `-q` for non-interactive mode), cookie resolution (CLI flag, env var, or file), orchestration of user-info and shelf scraping, and top-level error handling.
+
+### `scraper/output.py` — Output abstraction
+Bridges interactive and non-interactive (quiet) modes. In interactive mode, delegates to *rich* for progress bars, spinners, and styled output. In quiet mode, prints plain text with `[INFO]`/`[WARN]`/`[ERROR]` prefixes suitable for cron jobs and log-file redirection. Also controls whether scrapling's verbose logs go to a file (interactive) or stdout (quiet).
 
 ### `scraper/http.py` — HTTP layer
-Manages the two `scrapling` async browser sessions. Provides `get_soup()` (parsed HTML). Handles retry with exponential back-off, Retry-After parsing, auth-failure detection, and redirects scrapling's verbose logging to a file.
+Manages the two `scrapling` async browser sessions. Provides `get_soup()` (parsed HTML). Handles retry with exponential back-off, Retry-After parsing, auth-failure detection, and redirects scrapling's verbose logging to a file (interactive) or stdout (quiet mode).
 
 ### `scraper/parse.py` — DOM helpers
 Thin wrappers around scrapling's `Selector.find()` that narrow `Selector | None` to `Selector` with a clear error on miss (`ElementNotFound`). Also handles the `class` → `class_` keyword mapping.
@@ -62,5 +65,5 @@ goodreads-data/
 ## Dependencies
 
 - **scrapling[all]** — Playwright-based web scraper with anti-bot stealth mode.
-- **rich** — Terminal UI (progress bars, status spinners, styled output).
+- **rich** — Terminal UI (progress bars, status spinners, styled output). Only used in interactive mode; quiet mode produces plain text without rich.
 - **stdlib** — asyncio, argparse, json, re, pathlib, logging, email.utils.

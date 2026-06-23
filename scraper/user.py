@@ -3,12 +3,9 @@ import json
 import re
 
 from scrapling.parser import Selector
-from rich.console import Console
 
-from scraper import http
+from scraper import http, output
 from scraper.parse import find_tag
-
-console = Console()
 
 
 def get_user_name(soup: Selector) -> str:
@@ -39,7 +36,7 @@ async def get_user_info(args: Namespace) -> Selector | None:
     user_id: str = args.user_id
     output_file = args.output_dir / "user.json"
     url = "https://www.goodreads.com/user/show/" + user_id
-    with console.status("Finding user…"):
+    with output.status("Finding user\u2026"):
         soup = await http.get_soup(url)
 
     data = {
@@ -53,13 +50,13 @@ async def get_user_info(args: Namespace) -> Selector | None:
     with open(output_file, "w") as file:
         json.dump(data, file, indent=2)
 
-    # markup=False so a bracket in the user's name isn't parsed as rich markup.
-    console.print(
-        f"👤  {data['user_name']} · {data['num_ratings']} ratings · {data['num_reviews']} reviews",
+    output.log(
+        f"\U0001f464  {data['user_name']} \u00b7 {data['num_ratings']} ratings "
+        f"\u00b7 {data['num_reviews']} reviews",
         markup=False,
     )
 
     if not args.skip_shelves:
-        print()
+        output.log("")
 
     return soup

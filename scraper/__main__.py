@@ -4,23 +4,16 @@ import os
 import sys
 from pathlib import Path
 
-from rich.console import Console
-from rich.text import Text
-
-from scraper import __version__, http, shelves, user
-
-console = Console()
+from scraper import __version__, http, output, shelves, user
 
 
 async def scrape_user(args: argparse.Namespace, cookie: str | None) -> int:
-    await http.init_session(cookie)
+    await http.init_session(cookie, quiet=args.quiet)
     try:
         profile = await user.get_user_info(args)
         fetch_failures = await shelves.get_all_shelves(args, profile)
         path = str(args.output_dir.resolve())
-        line = Text("📁  Saved to ")
-        line.append(path, style=f"link file://{path}")
-        console.print(line)
+        output.log(f"\U0001f4c1  Saved to {path}")
         return fetch_failures
     finally:
         await http.close_session()
@@ -35,7 +28,7 @@ def resolve_cookie(args: argparse.Namespace) -> str | None:
     if args.cookie_file:
         path = Path(args.cookie_file)
         if not path.exists():
-            sys.exit(f"❌ --cookie_file path does not exist: {path}")
+            sys.exit(f"\u274c --cookie_file path does not exist: {path}")
         return path.read_text().strip()
     return None
 
@@ -77,12 +70,20 @@ def main() -> None:
     parser.add_argument(
         "--skip_authors", action="store_true", help="skip scraping authors"
     )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="non-interactive mode: plain text output, no progress bars; "
+             "scrapling logs go to stdout instead of a file",
+    )
 
     args = parser.parse_args()
 
+    output.init(quiet=args.quiet)
+
     if args.skip_user_info and args.skip_shelves:
-        console.print(
-            "🟡  Nothing to do: --skip_user_info and --skip_shelves are both set."
+        output.log_warn(
+            "Nothing to do: --skip_user_info and --skip_shelves are both set."
         )
         return
 
@@ -93,11 +94,11 @@ def main() -> None:
     try:
         fetch_failures = asyncio.run(scrape_user(args, cookie))
     except (http.AuthError, http.FetchError) as e:
-        sys.exit(f"❌ {e}")
+        sys.exit(f"\u274c {e}")
 
     if fetch_failures:
         sys.exit(
-            f"❌ {fetch_failures} book(s) couldn't be fetched after retries "
+            f"\u274c {fetch_failures} book(s) couldn't be fetched after retries "
             "(Goodreads may be rate-limiting). The export is incomplete — "
             "re-run to fetch the rest."
         )
