@@ -14,12 +14,6 @@ In `_dedupe_books`, the `except Exception: continue` silently discards all error
 
 **Fix:** Narrow to `except (ElementNotFound, AssertionError, AttributeError):` or similar.
 
-### 3. `get_html()` in http.py is unused
-
-The `get_html()` function (line 162) is defined but never called by any module. It parses HTML into a `Selector` (via `get_soup`) and then immediately returns the raw string — wasting the parsing work.
-
-**Fix:** Remove it, or rewrite to fetch raw HTML directly without parsing.
-
 ## Limitations
 
 ### Incremental updates don't refresh metadata

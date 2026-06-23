@@ -36,7 +36,7 @@ def test_clean_page_is_not_auth_failure():
     )
 
 
-# get_html retry/backoff — driven by a fake session so no network or real sleeps run.
+# get_soup retry/backoff — driven by a fake session so no network or real sleeps run.
 
 
 class _FakeResponse:
@@ -45,6 +45,14 @@ class _FakeResponse:
         self._body = body
         self.headers = headers or {}
         self._text_exc = text_exc
+
+    @property
+    def html_content(self):
+        return self._body
+
+    def css(self, _selector):
+        """Return a truthy stub — enough for _detect_auth_failure to work."""
+        return [True]
 
     def raise_for_status(self):
         if self.status >= 400:
@@ -76,7 +84,7 @@ class _FakeSession:
         self._steps = list(steps)
         self.calls = 0
 
-    def get(self, url):
+    def fetch(self, url):
         self.calls += 1
         return _FakeGet(self._steps.pop(0))
 
@@ -90,11 +98,13 @@ def fake_http(monkeypatch):
         sleeps.append(delay)
 
     monkeypatch.setattr(http.asyncio, "sleep", fake_sleep)
-    monkeypatch.setattr(http, "_semaphore", asyncio.Semaphore(http.MAX_CONCURRENCY))
+    monkeypatch.setattr(http, "_http_session", None)
+    monkeypatch.setattr(http, "_stealthy_session", None)
 
     def install(steps):
         session = _FakeSession(steps)
-        monkeypatch.setattr(http, "_session", session)
+        monkeypatch.setattr(http, "_http_session", session)
+        monkeypatch.setattr(http, "_stealthy_session", session)
         return session, sleeps
 
     return install
@@ -105,7 +115,7 @@ def test_parse_retry_after_reads_integer_seconds():
 
 
 def test_parse_retry_after_handles_http_date():
-    # A future HTTP-date yields a positive delay (get_html caps it at MAX_BACKOFF).
+    # A future HTTP-date yields a positive delay (get_soup caps it at MAX_BACKOFF).
     assert http._parse_retry_after("Wed, 21 Oct 2099 07:28:00 GMT") > 0
     # A past date means the window already elapsed → retry now.
     assert http._parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT") == 0
@@ -133,53 +143,56 @@ def test_is_transient_status():
     assert not http._is_transient_status(200)
 
 
-async def test_get_html_retries_transient_status_then_succeeds(fake_http):
+async def test_get_soup_retries_transient_status_then_succeeds(fake_http):
     session, sleeps = fake_http([_FakeResponse(503), _FakeResponse(200)])
 
-    assert await http.get_html("https://x") == "<html>ok</html>"
+    response = await http.get_soup("https://x")
+    assert response.html_content == "<html>ok</html>"
     assert session.calls == 2
     assert len(sleeps) == 1
 
 
-async def test_get_html_retries_on_timeout_then_succeeds(fake_http):
+async def test_get_soup_retries_on_timeout_then_succeeds(fake_http):
     session, sleeps = fake_http([asyncio.TimeoutError(), _FakeResponse(200)])
 
-    assert await http.get_html("https://x") == "<html>ok</html>"
+    response = await http.get_soup("https://x")
+    assert response.html_content == "<html>ok</html>"
     assert session.calls == 2
 
 
-async def test_get_html_retries_on_payload_error_mid_body(fake_http):
+async def test_get_soup_retries_on_payload_error_mid_body(fake_http):
     broken = _FakeResponse(200, text_exc=aiohttp.ClientPayloadError("connection lost"))
     session, sleeps = fake_http([broken, _FakeResponse(200)])
 
-    assert await http.get_html("https://x") == "<html>ok</html>"
+    response = await http.get_soup("https://x")
+    assert response.html_content == "<html>ok</html>"
     assert session.calls == 2
 
 
-async def test_get_html_raises_fetcherror_after_exhausting_retries(fake_http):
+async def test_get_soup_raises_fetcherror_after_exhausting_retries(fake_http):
     session, sleeps = fake_http([_FakeResponse(503)] * (http.MAX_RETRIES + 1))
 
     with pytest.raises(http.FetchError):
-        await http.get_html("https://x")
+        await http.get_soup("https://x")
     assert session.calls == http.MAX_RETRIES + 1
     assert len(sleeps) == http.MAX_RETRIES
 
 
-async def test_get_html_does_not_retry_non_transient_4xx(fake_http):
+async def test_get_soup_does_not_retry_non_transient_4xx(fake_http):
     session, sleeps = fake_http([_FakeResponse(404)])
 
     with pytest.raises(aiohttp.ClientResponseError):
-        await http.get_html("https://x")
+        await http.get_soup("https://x")
     assert session.calls == 1
     assert sleeps == []
 
 
-async def test_get_html_honors_and_caps_retry_after(fake_http):
+async def test_get_soup_honors_and_caps_retry_after(fake_http):
     session, sleeps = fake_http(
         [_FakeResponse(429, headers={"Retry-After": "999"}), _FakeResponse(200)]
     )
 
-    await http.get_html("https://x")
+    await http.get_soup("https://x")
     assert sleeps == [http.MAX_BACKOFF]
 
 

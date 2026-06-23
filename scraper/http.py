@@ -159,12 +159,6 @@ def _backoff(attempt: int) -> float:
 # ---------------------------------------------------------------------------
 
 
-async def get_html(url: str) -> str:
-    """Fetch *url* and return its raw HTML text."""
-    resp = await get_soup(url)
-    return resp.html_content
-
-
 async def get_soup(url: str, *, stealthy: bool = False) -> Selector:
     """Fetch *url* and return a parsed :class:`Selector`.
 

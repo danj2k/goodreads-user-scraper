@@ -18,8 +18,6 @@ import re
 import sys
 from pathlib import Path
 
-from bs4 import BeautifulSoup
-
 from scraper import http
 from scraper.__main__ import resolve_cookie
 
@@ -118,15 +116,15 @@ async def _capture(cookie):
                 if mode == "shelf" and not http.has_cookie():
                     print(f"⏭️  {name}: needs a cookie (skipped)")
                     continue
-                html = await http.get_html(url)
-                # Goodreads serves login/error pages with a 200, so apply the same
-                # auth-failure check production does before overwriting a fixture.
-                if http.has_cookie() and http._detect_auth_failure(
-                    BeautifulSoup(html, "html.parser"), html
-                ):
+                # get_soup already checks for auth failures and raises AuthError;
+                # catch it here to produce a friendlier message than a traceback.
+                try:
+                    response = await http.get_soup(url)
+                except http.AuthError:
                     sys.exit(
                         f"❌ {name}: got an auth-failure page — cookie may be expired. Re-grab it and retry."
                     )
+                html = response.html_content
                 (FIXTURES_DIR / name).write_text(
                     scrub(html, session_cookie), encoding="utf-8"
                 )
