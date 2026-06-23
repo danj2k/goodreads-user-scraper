@@ -1,6 +1,7 @@
 from argparse import Namespace
 import json
 import re
+import sqlite3
 
 from scrapling.parser import Selector
 
@@ -34,7 +35,6 @@ async def get_user_info(args: Namespace) -> Selector | None:
         return None
 
     user_id: str = args.user_id
-    output_file = args.output_dir / "user.json"
     url = "https://www.goodreads.com/user/show/" + user_id
     with output.status("Finding user\u2026"):
         soup = await http.get_soup(url)
@@ -47,8 +47,15 @@ async def get_user_info(args: Namespace) -> Selector | None:
         "num_reviews": get_num_reviews(soup),
     }
 
-    with open(output_file, "w") as file:
-        json.dump(data, file, indent=2)
+    # Write to database if available, otherwise write JSON.
+    db_conn: sqlite3.Connection | None = getattr(args, "db_conn", None)
+    if db_conn is not None:
+        from scraper.db import upsert_user
+        upsert_user(db_conn, data)
+    else:
+        output_file = args.output_dir / "user.json"
+        with open(output_file, "w") as file:
+            json.dump(data, file, indent=2)
 
     output.log(
         f"\U0001f464  {data['user_name']} \u00b7 {data['num_ratings']} ratings "

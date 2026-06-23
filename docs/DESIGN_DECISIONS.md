@@ -4,15 +4,32 @@
 
 Goodreads applies different levels of bot protection to different page types. Shelf list pages (the `&print=true` view) do not trigger anti-bot measures, so they use a lighter-weight `AsyncDynamicSession`. Individual book and author pages do trigger protection, requiring `AsyncStealthySession` with fingerprint spoofing and Cloudflare bypass. Using two sessions avoids paying the stealth overhead for pages that don't need it.
 
-## Per-entity JSON files instead of one large export
+## SQLite database as default storage
 
-Each book gets its own `books/<id>.json` file. This was chosen because:
-- It makes incremental re-runs efficient: existing files are read and only missing shelf data is updated.
-- It avoids re-scraping a book's detail page if it was already fetched in a previous run.
-- It keeps individual file sizes small and easy to inspect.
-- It allows partial exports to be useful even if the run is interrupted.
+Data is stored in a SQLite database by default (`--db goodreads-library.db`). This was chosen because:
 
-The trade-off is many small files instead of one searchable export. A single-file export can be produced externally by merging the JSON files.
+- **Incremental updates**: The database enables a fast-path check — after cheap shelf-page extraction, `needs_scrape()` compares shelf membership, rating, and read dates against the DB. Unchanged books are skipped entirely (no expensive HTTP fetch). This reduces subsequent run times from hours to minutes for large libraries.
+- **Single-file export**: One `.db` file instead of thousands of small JSON files. Easier to back up, transfer, and query.
+- **Relational integrity**: Foreign keys between books and authors, many-to-many shelves and genres, enforced by the database.
+- **Query flexibility**: Users can write SQL queries against their library (e.g., "show all 5-star books in the Fantasy genre read in 2025").
+
+JSON output remains available via `--db ""` for backward compatibility and tooling that expects the original file structure.
+
+### Incremental update strategy
+
+The three fields compared during incremental checks are exactly the ones that shelf-page extraction can produce: shelf membership, user rating, and read dates. Book metadata (title, description, genres, etc.) is *not* compared — it's only set during the expensive page scrape. This means:
+
+- A book moved between shelves → fast DB update (no HTTP)
+- A user re-rating a book → fast DB update (no HTTP)
+- A book's description changing on Goodreads → not detected (requires deleting the book row to force re-scrape)
+
+### Book ID normalisation
+
+Shelf pages use full slug IDs (e.g., `211721806-dungeon-crawler-carl`) while book pages and the database use just the numeric prefix (`211721806`). The `_normalize_book_id()` helper in `shelves.py` extracts the numeric portion during deduplication, keeping all downstream code (DB lookups, JSON filenames, scrape URLs) consistent.
+
+### Author upsert before book upsert
+
+When inserting a new book, the author record is upserted first to satisfy the `FOREIGN KEY` constraint on `books.author_id`. This ordering is enforced in `_process_book_db()`.
 
 ## Print-view shelf pages (`&print=true`)
 

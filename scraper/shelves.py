@@ -3,6 +3,7 @@ import asyncio
 import json
 from pathlib import Path
 import re
+import sqlite3
 from typing import Any
 
 from scrapling.parser import Selector
@@ -98,6 +99,19 @@ async def collect_shelf_rows(
     return rows, exclusive
 
 
+def _normalize_book_id(raw_id: str) -> str:
+    """Extract the numeric portion from a Goodreads book ID.
+
+    Shelf pages use the full slug format (e.g. ``211721806-dungeon-crawler-carl``)
+    while book pages and the database use just the numeric prefix.  Normalising
+    here keeps all downstream code (DB lookups, JSON filenames, scrape URLs)
+    consistent.
+    """
+    match = re.compile("([^.-]+)").search(raw_id)
+    assert match is not None
+    return match.group()
+
+
 def _dedupe_books(
     shelf_rows: list[tuple[str, list[Selector]]],
 ) -> dict[str, dict[str, Any]]:
@@ -105,7 +119,7 @@ def _dedupe_books(
     for shelf, page_rows in shelf_rows:
         for row in page_rows:
             try:
-                book_id = get_id(row)
+                book_id = _normalize_book_id(get_id(row))
                 entry = books_by_id.get(book_id)
                 if entry is None:
                     entry = {
@@ -121,10 +135,100 @@ def _dedupe_books(
     return books_by_id
 
 
+def _determine_exclusive_shelf(
+    shelf_set: set[str],
+    exclusive_shelves: set[str] | None,
+) -> str | None:
+    """Return the first alphabetically matching exclusive shelf, or None."""
+    if exclusive_shelves is None:
+        return None
+    matched = shelf_set & exclusive_shelves
+    return sorted(matched)[0] if matched else None
+
+
 async def process_book(
-    book_id: str, info: dict[str, Any], args: Namespace, output_dir: Path, exclusive_shelves: set[str] | None = None
+    book_id: str,
+    info: dict[str, Any],
+    args: Namespace,
+    output_dir: Path,
+    exclusive_shelves: set[str] | None = None,
 ) -> bool:
-    """Scrape or update one book. Returns True if exhausted retries skipped it."""
+    """Scrape or update one book. Returns True if exhausted retries skipped it.
+
+    When a database connection is available (``args.db_conn``), incremental
+    updates check whether the book's shelf, rating, or dates have changed
+    before committing to an expensive page scrape.  When no database is
+    present, falls back to the original per-file JSON behaviour.
+    """
+    db_conn: sqlite3.Connection | None = getattr(args, "db_conn", None)
+
+    if db_conn is not None:
+        return await _process_book_db(book_id, info, args, exclusive_shelves, db_conn)
+    return await _process_book_json(book_id, info, args, output_dir, exclusive_shelves)
+
+
+# ---------------------------------------------------------------------------
+# Database path
+# ---------------------------------------------------------------------------
+
+async def _process_book_db(
+    book_id: str,
+    info: dict[str, Any],
+    args: Namespace,
+    exclusive_shelves: set[str] | None,
+    conn: sqlite3.Connection,
+) -> bool:
+    from scraper.db import needs_scrape, upsert_author, upsert_book, update_book_shelf
+
+    exclusive_shelf = _determine_exclusive_shelf(
+        set(info["shelves"]), exclusive_shelves
+    )
+
+    try:
+        if not needs_scrape(conn, book_id, info):
+            # Book exists with unchanged shelf/rating/dates — fast path.
+            return False
+
+        # Check whether the book row already exists (for metadata preservation).
+        existing = conn.execute(
+            "SELECT 1 FROM books WHERE book_id = ?", (book_id,)
+        ).fetchone()
+
+        if existing is not None:
+            # Book metadata is already in the DB; just update shelf data.
+            update_book_shelf(conn, book_id, info, exclusive_shelf)
+        else:
+            # New book — full scrape and insert.
+            book = await books.scrape_book(book_id, args)
+            book["rating"] = info["rating"]
+            book["dates_read"] = info["dates_read"]
+            book["shelves"] = info["shelves"]
+            book["exclusive_shelf"] = exclusive_shelf
+            # Upsert the author first so the FK constraint is satisfied.
+            author_data = book.get("author")
+            if isinstance(author_data, dict):
+                upsert_author(conn, author_data)
+            upsert_book(conn, book)
+
+        return False
+    except http.AuthError:
+        raise  # a bad cookie dooms the whole run, not just this book
+    except Exception as e:
+        output.log_warn(f"Skipped {book_id}: {e}")
+        return isinstance(e, http.FetchError)
+
+
+# ---------------------------------------------------------------------------
+# JSON path (original behaviour)
+# ---------------------------------------------------------------------------
+
+async def _process_book_json(
+    book_id: str,
+    info: dict[str, Any],
+    args: Namespace,
+    output_dir: Path,
+    exclusive_shelves: set[str] | None,
+) -> bool:
     try:
         file_path = output_dir / f"{book_id}.json"
         if file_path.exists():
@@ -211,6 +315,18 @@ async def get_all_shelves(args: Namespace, profile: Selector | None = None) -> i
         output.log_info(
             f"Exclusive shelves: {', '.join(sorted(exclusive_shelves))}"
         )
+
+    db_conn: sqlite3.Connection | None = getattr(args, "db_conn", None)
+
+    if db_conn is not None:
+        from scraper.db import needs_scrape
+        # Count how many books actually need scraping (DB incremental check).
+        skip_count = 0
+        for book_id, info in books_by_id.items():
+            if not needs_scrape(db_conn, book_id, info):
+                skip_count += 1
+        if skip_count:
+            output.log_info(f"{skip_count} up-to-date, {len(books_by_id) - skip_count} to scrape")
 
     with output.Progress("Scraping books", len(books_by_id)) as progress:
         async def run(book_id: str, info: dict[str, Any]) -> bool:

@@ -6,7 +6,8 @@ from scrapling.parser import Selector
 
 from scraper import http, shelves
 
-READ_BOOK_ID = "211721806-dungeon-crawler-carl"
+READ_BOOK_ID = "211721806"
+READ_BOOK_ID_TITLE = "211721806-dungeon-crawler-carl"
 
 def rows(soup, name):
     body = soup(name).find("tbody", {"id": "booksBody"})
@@ -21,7 +22,7 @@ def _make_row(html):
 # Row parsers
 
 def test_get_id(soup):
-    assert shelves.get_id(rows(soup, "shelf_read.html")[0]) == READ_BOOK_ID
+    assert shelves.get_id(rows(soup, "shelf_read.html")[0]) == READ_BOOK_ID_TITLE
 
 def test_get_rating_when_rated(soup):
     assert shelves.get_rating(rows(soup, "shelf_read.html")[0]) == 4
@@ -222,8 +223,9 @@ async def test_get_all_shelves_dedupes_and_scrapes(
     books_dir = tmp_path / "books"
     assert books_dir.exists()
     # Every unique book across the two non-empty shelves is scraped exactly once.
-    expected = {shelves.get_id(r) for r in rows(soup, "shelf_read.html")} | {
-        shelves.get_id(r) for r in rows(soup, "shelf_to_read.html")
+    # IDs are normalised to the numeric prefix (e.g. "211721806") by _dedupe_books.
+    expected = {shelves._normalize_book_id(shelves.get_id(r)) for r in rows(soup, "shelf_read.html")} | {
+        shelves._normalize_book_id(shelves.get_id(r)) for r in rows(soup, "shelf_to_read.html")
     }
     assert {p.stem for p in books_dir.glob("*.json")} == expected
     read_book = json.loads((books_dir / f"{READ_BOOK_ID}.json").read_text())

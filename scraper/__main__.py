@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-from scraper import __version__, http, output, shelves, user
+from scraper import __version__, db, http, output, shelves, user
 
 
 async def scrape_user(args: argparse.Namespace, cookie: str | None) -> int:
@@ -12,8 +12,11 @@ async def scrape_user(args: argparse.Namespace, cookie: str | None) -> int:
     try:
         profile = await user.get_user_info(args)
         fetch_failures = await shelves.get_all_shelves(args, profile)
-        path = str(args.output_dir.resolve())
-        output.log(f"\U0001f4c1  Saved to {path}")
+        if args.db_conn is not None:
+            output.log(f"💾 Saved to {args.db_path}")
+        else:
+            path = str(args.output_dir.resolve())
+            output.log(f"📁 Saved to {path}")
         return fetch_failures
     finally:
         await http.close_session()
@@ -28,7 +31,7 @@ def resolve_cookie(args: argparse.Namespace) -> str | None:
     if args.cookie_file:
         path = Path(args.cookie_file)
         if not path.exists():
-            sys.exit(f"\u274c --cookie_file path does not exist: {path}")
+            sys.exit(f"❌ --cookie_file path does not exist: {path}")
         return path.read_text().strip()
     return None
 
@@ -46,6 +49,14 @@ def main() -> None:
         type=Path,
         default=Path("goodreads-data"),
         help="output directory for scraped data (default: goodreads-data)",
+    )
+    parser.add_argument(
+        "--db",
+        type=str,
+        default="goodreads-library.db",
+        dest="db_path",
+        help="SQLite database file (default: goodreads-library.db). "
+             "Set to empty string to disable database storage.",
     )
     parser.add_argument(
         "--cookie",
@@ -67,9 +78,7 @@ def main() -> None:
         action="store_true",
         help="skip scraping shelves and their books",
     )
-    parser.add_argument(
-        "--skip_authors", action="store_true", help="skip scraping authors"
-    )
+    parser.add_argument("--skip_authors", action="store_true", help="skip scraping authors")
     parser.add_argument(
         "-q", "--quiet",
         action="store_true",
@@ -87,6 +96,12 @@ def main() -> None:
         )
         return
 
+    # Resolve database path.  Empty string means "no database".
+    if args.db_path == "":
+        args.db_path = None
+
+    args.db_conn = db.open_db(args.db_path)
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     cookie = resolve_cookie(args)
@@ -94,11 +109,14 @@ def main() -> None:
     try:
         fetch_failures = asyncio.run(scrape_user(args, cookie))
     except (http.AuthError, http.FetchError) as e:
-        sys.exit(f"\u274c {e}")
+        sys.exit(f"❌ {e}")
+    finally:
+        if args.db_conn is not None:
+            args.db_conn.close()
 
     if fetch_failures:
         sys.exit(
-            f"\u274c {fetch_failures} book(s) couldn't be fetched after retries "
+            f"❌ {fetch_failures} book(s) couldn't be fetched after retries "
             "(Goodreads may be rate-limiting). The export is incomplete — "
             "re-run to fetch the rest."
         )

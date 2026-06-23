@@ -1,26 +1,53 @@
 # Implementation Notes
 
+## SQLite database schema
+
+The database uses WAL journal mode for better concurrent read performance and foreign key constraints. Six tables:
+
+- **`users`** — PK `user_id`. Stores profile stats (name, rating count, average, review count).
+- **`authors`** — PK `author_id`. Stores author metadata (name, description, image).
+- **`books`** — PK `book_id` (numeric prefix only, e.g., "211721806"). FK `author_id → authors`. Stores full book metadata plus the user's `rating`, `exclusive_shelf`, and `book_id_title` (the full slug for reference).
+- **`book_shelves`** — Composite PK `(book_id, shelf_name)`. Replaced wholesale on each upsert (not appended).
+- **`book_dates_read`** — Composite PK `(book_id, date_read)`. Replaced wholesale on each upsert.
+- **`book_genres`** — Composite PK `(book_id, genre)`. Replaced wholesale on each upsert.
+
+All child tables (`book_shelves`, `book_dates_read`, `book_genres`) are deleted and re-inserted on every upsert. This avoids complex diffing logic and is fast for the typical case (< 20 shelves, < 10 dates, < 15 genres per book).
+
+## Incremental update logic
+
+The `needs_scrape()` function in `db.py` is the core of the incremental optimization. It compares three fields:
+
+1. **Shelf membership** — set comparison (`book_shelves` table vs. current shelf list from `_dedupe_books`). Order-independent.
+2. **User rating** — integer comparison (`books.rating` vs. current rating from shelf row).
+3. **Read dates** — list comparison (`book_dates_read` table vs. current dates from shelf row). Order-dependent (chronological order matters).
+
+If all three match, the book is skipped entirely — no HTTP request, no scraping. This is the fast path for subsequent runs.
+
+If any field changed but the book already exists in the DB, `update_book_shelf()` updates only the shelf-related fields (rating, shelves, dates) without touching book metadata (title, description, genres, etc.). This is a fast DB-only operation.
+
+If the book is new (not in the DB), the full `scrape_book()` is called and the complete record is inserted via `upsert_book()`.
+
 ## Exclusive shelf detection
 
 Goodreads classifies certain shelves as "exclusive" (read, to-read, currently-reading, did-not-finish). A book can only belong to one exclusive shelf at a time. The detection works by examining `<li>` elements in the `&print=true` shelf page's `<ul class="shelves">` list: those with class `exclusive` identify exclusive shelves.
 
 Detection happens inside `collect_shelf_rows` on the first page of each shelf, which avoids a redundant re-fetch (the same `<ul class="shelves">` is present on every page). The sets from all shelves are merged in `get_all_shelves` after collection completes.
 
-The `exclusive_shelf` value written to each book's JSON is derived from the intersection of the book's actual shelves and the exclusive shelf set, taking the first alphabetically when there's ambiguity.
+The `exclusive_shelf` value written to each book is derived from the intersection of the book's actual shelves and the exclusive shelf set, taking the first alphabetically when there's ambiguity.
 
 ## Shelf row extraction
 
 Shelf pages are HTML tables. Book IDs are extracted from the "title" column's `<a>` href. Ratings come from the `data-rating` attribute on a `div.stars` element (0 means unrated, stored as `None`). Dates are extracted from `div.date_row` elements within the "date_read" column, filtering out "not set" entries.
 
+## Book ID normalisation
+
+Shelf pages produce full slug IDs (e.g., `211721806-dungeon-crawler-carl`) from the `<a>` href. Book pages and the database use just the numeric prefix (`211721806`). The `_normalize_book_id()` helper in `shelves.py` extracts the numeric portion during deduplication, applied inside `_dedupe_books()` so all downstream code (DB lookups, JSON filenames, scrape URLs) uses the short format consistently.
+
 ## Deduplication across shelves
 
-Books appear on multiple shelves (e.g., "read" and "fiction"). The `_dedupe_books` function deduplicates by book ID, merging shelf lists. The first occurrence's rating and read dates are kept; subsequent occurrences only add new shelf names. This is safe because rating and read dates are the same regardless of which shelf the row was extracted from.
+Books appear on multiple shelves (e.g., "read" and "fiction"). The `_dedupe_books` function deduplicates by normalised book ID, merging shelf lists. The first occurrence's rating and read dates are kept; subsequent occurrences only add new shelf names. This is safe because rating and read dates are the same regardless of which shelf the row was extracted from.
 
 Error handling during deduplication catches only `ElementNotFound` (from `scraper.parse`). A shelf row with missing expected DOM elements is skipped silently — this is a known possibility when Goodreads serves slightly different HTML for some books. Any other exception (`AssertionError`, `TypeError`, etc.) indicates a programming bug and is allowed to propagate.
-
-## Incremental book updates
-
-When a book's JSON file already exists, `process_book` reads it and only appends new shelf names from the current shelf data. The book's detailed metadata (title, description, genres, etc.) is not re-fetched. This means metadata changes on Goodreads won't be reflected without deleting the book file first.
 
 ## Scrapling logging redirect
 
