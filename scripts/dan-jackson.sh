@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ -f .venv/bin/activate ]; then
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+fi
+
+PYTHON="${PYTHON:-python3}"
+USER_ID="${GOODREADS_USER_ID:-4937779}"
+
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+  echo "Error: $PYTHON not found."
+  echo "Run scripts/install.sh first."
+  exit 1
+fi
+
+if [ -f .goodreads-cookie ]; then
+  "$PYTHON" -m scraper --user_id "$USER_ID" --cookie_file .goodreads-cookie -q
+else
+  "$PYTHON" -m scraper --user_id "$USER_ID" -q
+fi
