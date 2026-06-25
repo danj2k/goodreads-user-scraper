@@ -22,7 +22,7 @@ Thin wrappers around scrapling's `Selector.find()` that narrow `Selector | None`
 Scrapes the user profile page for name, rating count, average rating, and review count. Writes to the database (when `--db` is active) or `user.json` (legacy JSON mode).
 
 ### `scraper/shelves.py` — Shelf orchestration
-The most complex module. Discovers all shelves from the user profile, fetches every shelf page (concurrently via `asyncio.gather`), detects exclusive shelves during collection, deduplicates books across shelves, and coordinates per-book scraping. Each book is written to the database (when `--db` is active) or `books/<id>.json` (legacy JSON mode).
+The most complex module. Discovers all shelves from the user profile, fetches every shelf page (concurrently via `asyncio.gather` with an `asyncio.Semaphore(5)`), detects exclusive shelves during collection, deduplicates books across shelves, and coordinates per-book scraping (also capped at 5 concurrent). Each book is written to the database (when `--db` is active) or `books/<id>.json` (legacy JSON mode).
 
 ### `scraper/books.py` — Book details
 Scrapes an individual book page for title, description, genres, series, publication year, page count, ratings, reviews, average rating, and cover image. Optionally delegates to the author module.

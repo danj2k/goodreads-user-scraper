@@ -12,6 +12,7 @@ from scraper import books, http, output
 from scraper.parse import ElementNotFound, find_tag, get_text
 
 PER_PAGE = 100
+_CONCURRENCY = 5  # max simultaneous browser fetches (caps Playwright memory)
 
 
 def detect_exclusive_shelves(soup: Selector) -> set[str]:
@@ -293,9 +294,11 @@ async def get_all_shelves(args: Namespace, profile: Selector | None = None) -> i
         assert match is not None
         shelf_names.append(match.group(1))
 
+    sem = asyncio.Semaphore(_CONCURRENCY)
     with output.Progress("Finding shelves", len(shelf_names)) as progress:
         async def collect(shelf: str) -> tuple[str, list[Selector], set[str]]:
-            rows, exclusive = await collect_shelf_rows(user_id, shelf)
+            async with sem:
+                rows, exclusive = await collect_shelf_rows(user_id, shelf)
             progress.advance()
             return shelf, rows, exclusive
 
@@ -330,9 +333,10 @@ async def get_all_shelves(args: Namespace, profile: Selector | None = None) -> i
 
     with output.Progress("Scraping books", len(books_by_id)) as progress:
         async def run(book_id: str, info: dict[str, Any]) -> bool:
-            failed = await process_book(
-                book_id, info, args, output_dir, exclusive_shelves=exclusive_shelves
-            )
+            async with sem:
+                failed = await process_book(
+                    book_id, info, args, output_dir, exclusive_shelves=exclusive_shelves
+                )
             progress.advance()
             return failed
 

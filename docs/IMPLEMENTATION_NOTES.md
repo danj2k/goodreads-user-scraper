@@ -71,3 +71,15 @@ This module is imported by `__main__.py`, `user.py`, and `shelves.py`. In quiet 
 During the conversion from BeautifulSoup to scrapling, a subtle difference in `.text` behaviour was discovered. BeautifulSoup's `.text` recursively concatenates all descendant text nodes. Scrapling's `Selector.text` only returns the element's *direct* text (the first text node), which is empty when content lives inside child tags.
 
 The `get_text()` helper in `scraper/parse.py` bridges this gap by delegating to lxml's `text_content()`, which recursively collects all text — matching the BeautifulSoup behaviour that the parser functions depend on. It is used in `get_description` (books.py), `get_author_description` (author.py), and `get_dates_read` (shelves.py) — the three places where elements contain nested markup. All other `.text` usages in the codebase are on leaf elements (text-only spans, headings, etc.) where scrapling's `.text` works correctly.
+
+## Concurrency control
+
+Both `asyncio.gather` calls in `get_all_shelves()` — shelf collection and book scraping — are wrapped with an `asyncio.Semaphore(_CONCURRENCY)` (default 5). This caps the number of simultaneous Playwright browser fetches. Each fetch opens its own browser page, which consumes significant memory (tens of MB per page). Without the semaphore, a user with 400 books would open 400 pages simultaneously, causing multi-GB RSS growth.
+
+The semaphore is shared across both phases (shelf collection and book processing) by reusing the same instance. With 5 concurrent fetches, the scrape proceeds at a manageable rate while keeping memory bounded. The constant `_CONCURRENCY` in `shelves.py` can be tuned without code changes.
+
+## Playwright timeout handling
+
+The retry loop in `http.get_soup()` catches transient errors to retry with exponential back-off. The original catch list was `(TimeoutError, ConnectionError, OSError)`. However, Playwright raises its own `playwright.async_api.TimeoutError` (e.g. "Page.goto: Timeout 30000ms exceeded"), which is *not* a subclass of Python's built-in `TimeoutError`. Without catching it explicitly, a Playwright timeout would escape the retry loop, propagate up through `scrape_book()`, and be caught by the broad `except Exception` in `process_book()` — leaving the Playwright page open without proper session cleanup.
+
+The fix imports `playwright.async_api.TimeoutError` as `_PlaywrightTimeoutError` (with a graceful `ImportError` fallback for environments where Playwright isn't installed) and catches `_TIMEOUT_ERRORS = (TimeoutError, PlaywrightTimeoutError, ConnectionError, OSError)`.

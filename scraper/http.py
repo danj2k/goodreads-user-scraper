@@ -8,6 +8,14 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+try:
+    from playwright.async_api import (
+        TimeoutError as _PlaywrightTimeoutError,
+    )
+    _TIMEOUT_ERRORS = (TimeoutError, _PlaywrightTimeoutError, ConnectionError, OSError)
+except ImportError:
+    _TIMEOUT_ERRORS = (TimeoutError, ConnectionError, OSError)
+
 from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
 from scrapling.parser import Selector
 
@@ -193,7 +201,7 @@ async def get_soup(url: str, *, stealthy: bool = False) -> Selector:
                     raise AuthError()
                 return response
             delay = _parse_retry_after(response.headers.get("Retry-After"))
-        except (TimeoutError, ConnectionError, OSError):
+        except _TIMEOUT_ERRORS:
             delay = None
         if attempt == MAX_RETRIES:
             break

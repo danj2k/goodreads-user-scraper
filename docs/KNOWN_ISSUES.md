@@ -19,6 +19,12 @@ All tests now pass after converting the test infrastructure from BeautifulSoup t
 ### 4. Book ID mismatch between shelf extraction and database
 Shelf pages produce full slug IDs (e.g., `211721806-dungeon-crawler-carl`) while the database stores just the numeric prefix (`211721806`). Fixed by adding `_normalize_book_id()` in `shelves.py` and applying it in `_dedupe_books()` so all downstream code uses the short format consistently.
 
+### 5. OOM from unbounded concurrency
+`asyncio.gather` was used for both shelf collection and book processing with no concurrency limit. With hundreds of books, every book was scraped simultaneously — each opening its own Playwright browser page, all held in memory at once. This caused multi-GB RSS growth. Fixed by adding `asyncio.Semaphore(_CONCURRENCY)` (default 5) around both gather calls in `get_all_shelves()`. Shelf collection and book scraping now run at most 5 concurrent fetches each.
+
+### 6. Playwright TimeoutError not caught by retry logic
+The retry loop in `http.get_soup()` caught `(TimeoutError, ConnectionError, OSError)` — but Playwright's `playwright.async_api.TimeoutError` is a distinct class, not a subclass of Python's built-in `TimeoutError`. A page.goto timeout could escape the except clause and propagate up, leaving the Playwright page open mid-flight without proper cleanup. Fixed by importing `playwright.async_api.TimeoutError` (with a graceful fallback if Playwright isn't installed) and catching `_TIMEOUT_ERRORS = (TimeoutError, PlaywrightTimeoutError, ConnectionError, OSError)`.
+
 ## Limitations
 
 ### Incremental updates don't refresh metadata
@@ -36,7 +42,3 @@ All CSS selectors and data-testid attributes are hardcoded to Goodreads' current
 ### Cookie expires silently
 
 If the session cookie expires mid-run, subsequent book/author fetches will fail with `AuthError`. There is no proactive cookie validation at startup — the error surfaces only when a protected page is fetched.
-
-### Concurrent requests not bounded
-
-`asyncio.gather` is used for both shelf collection and book processing with no concurrency limit. With hundreds of books, this can overwhelm Goodreads or the local browser, leading to timeouts and rate limiting. A semaphore-based concurrency cap would help.
