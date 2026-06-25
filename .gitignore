@@ -13,4 +13,4 @@ goodreads_user_scraper.egg-info
 docs/superpowers/plans/
 scrapling_fetch.log
 uv.lock
-*.db
+*.db*
