@@ -25,6 +25,12 @@ Shelf pages produce full slug IDs (e.g., `211721806-dungeon-crawler-carl`) while
 ### 6. Playwright TimeoutError not caught by retry logic
 The retry loop in `http.get_soup()` caught `(TimeoutError, ConnectionError, OSError)` — but Playwright's `playwright.async_api.TimeoutError` is a distinct class, not a subclass of Python's built-in `TimeoutError`. A page.goto timeout could escape the except clause and propagate up, leaving the Playwright page open mid-flight without proper cleanup. Fixed by importing `playwright.async_api.TimeoutError` (with a graceful fallback if Playwright isn't installed) and catching `_TIMEOUT_ERRORS = (TimeoutError, PlaywrightTimeoutError, ConnectionError, OSError)`.
 
+### 7. Date comparison order-sensitivity caused spurious re-scrapes
+`needs_scrape()` compared `dates_read` lists directly: `state["dates_read"] != shelf_data["dates_read"]`. SQLite returns dates in non-deterministic order (no `ORDER BY`), while shelf extraction returns them in DOM order. This caused false positives on every subsequent run, triggering unnecessary full re-scrapes. Fixed by sorting both sides before comparison: `sorted(state["dates_read"]) != sorted(shelf_data["dates_read"])`.
+
+### 8. Redundant DB query in incremental book processing
+After `needs_scrape()` returned `True` (meaning the book exists but changed), `_process_book_db()` fired a second `SELECT 1 FROM books WHERE book_id = ?` to distinguish new books from changed ones — but `needs_scrape` already determined this and discarded the information. Fixed by introducing a `ScrapeStatus` enum (`CURRENT`/`CHANGED`/`MISSING`) returned by `needs_scrape()`, so callers branch directly without re-querying.
+
 ## Limitations
 
 ### Incremental updates don't refresh metadata

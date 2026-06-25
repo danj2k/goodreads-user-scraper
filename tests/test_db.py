@@ -240,44 +240,44 @@ def test_upsert_book_with_no_dates(conn, sample_book):
 
 def test_needs_scrape_new_book(conn):
     shelf_data = {"shelves": ["read"], "rating": 4, "dates_read": ["May 19, 2026"]}
-    assert db.needs_scrape(conn, "99999", shelf_data) is True
+    assert db.needs_scrape(conn, "99999", shelf_data) == db.ScrapeStatus.MISSING
 
 
 def test_needs_scrape_unchanged(conn, sample_book):
     _insert_book_with_author(conn, sample_book)
     shelf_data = {"shelves": ["read", "fiction"], "rating": 4, "dates_read": ["May 19, 2026"]}
-    assert db.needs_scrape(conn, "211721806", shelf_data) is False
+    assert db.needs_scrape(conn, "211721806", shelf_data) == db.ScrapeStatus.CURRENT
 
 
 def test_needs_scrape_shelf_changed(conn, sample_book):
     _insert_book_with_author(conn, sample_book)
     shelf_data = {"shelves": ["read"], "rating": 4, "dates_read": ["May 19, 2026"]}
-    assert db.needs_scrape(conn, "211721806", shelf_data) is True
+    assert db.needs_scrape(conn, "211721806", shelf_data) == db.ScrapeStatus.CHANGED
 
 
 def test_needs_scrape_rating_changed(conn, sample_book):
     _insert_book_with_author(conn, sample_book)
     shelf_data = {"shelves": ["read", "fiction"], "rating": 5, "dates_read": ["May 19, 2026"]}
-    assert db.needs_scrape(conn, "211721806", shelf_data) is True
+    assert db.needs_scrape(conn, "211721806", shelf_data) == db.ScrapeStatus.CHANGED
 
 
 def test_needs_scrape_dates_changed(conn, sample_book):
     _insert_book_with_author(conn, sample_book)
     shelf_data = {"shelves": ["read", "fiction"], "rating": 4, "dates_read": []}
-    assert db.needs_scrape(conn, "211721806", shelf_data) is True
+    assert db.needs_scrape(conn, "211721806", shelf_data) == db.ScrapeStatus.CHANGED
 
 
 def test_needs_scrape_dates_added(conn, sample_book):
     _insert_book_with_author(conn, sample_book)
     shelf_data = {"shelves": ["read", "fiction"], "rating": 4, "dates_read": ["May 19, 2026", "Jun 1, 2026"]}
-    assert db.needs_scrape(conn, "211721806", shelf_data) is True
+    assert db.needs_scrape(conn, "211721806", shelf_data) == db.ScrapeStatus.CHANGED
 
 
 def test_needs_scrape_shelf_order_ignored(conn, sample_book):
     """Shelf comparison is set-based; order doesn't matter."""
     _insert_book_with_author(conn, sample_book)
     shelf_data = {"shelves": ["fiction", "read"], "rating": 4, "dates_read": ["May 19, 2026"]}
-    assert db.needs_scrape(conn, "211721806", shelf_data) is False
+    assert db.needs_scrape(conn, "211721806", shelf_data) == db.ScrapeStatus.CURRENT
 
 
 # ---------------------------------------------------------------------------
@@ -322,18 +322,18 @@ def test_update_book_shelf_sets_exclusive(conn, sample_book):
 def test_round_trip_no_scrape_needed(conn, sample_book):
     _insert_book_with_author(conn, sample_book)
     shelf_data = {"shelves": ["read", "fiction"], "rating": 4, "dates_read": ["May 19, 2026"]}
-    assert db.needs_scrape(conn, "211721806", shelf_data) is False
+    assert db.needs_scrape(conn, "211721806", shelf_data) == db.ScrapeStatus.CURRENT
 
     # Simulate a second run with the same data — still no scrape needed.
-    assert db.needs_scrape(conn, "211721806", shelf_data) is False
+    assert db.needs_scrape(conn, "211721806", shelf_data) == db.ScrapeStatus.CURRENT
 
 
 def test_round_trip_scrape_after_shelf_change(conn, sample_book):
     _insert_book_with_author(conn, sample_book)
     # User moves book to a different shelf.
     new_shelf_data = {"shelves": ["to-read"], "rating": None, "dates_read": []}
-    assert db.needs_scrape(conn, "211721806", new_shelf_data) is True
+    assert db.needs_scrape(conn, "211721806", new_shelf_data) == db.ScrapeStatus.CHANGED
 
     # After updating shelf data, no scrape needed.
     db.update_book_shelf(conn, "211721806", new_shelf_data)
-    assert db.needs_scrape(conn, "211721806", new_shelf_data) is False
+    assert db.needs_scrape(conn, "211721806", new_shelf_data) == db.ScrapeStatus.CURRENT

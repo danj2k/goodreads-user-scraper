@@ -15,17 +15,17 @@ All child tables (`book_shelves`, `book_dates_read`, `book_genres`) are deleted 
 
 ## Incremental update logic
 
-The `needs_scrape()` function in `db.py` is the core of the incremental optimization. It compares three fields:
+The `needs_scrape()` function in `db.py` is the core of the incremental optimization. It returns a `ScrapeStatus` enum (`CURRENT`/`CHANGED`/`MISSING`) and compares three fields:
 
 1. **Shelf membership** — set comparison (`book_shelves` table vs. current shelf list from `_dedupe_books`). Order-independent.
 2. **User rating** — integer comparison (`books.rating` vs. current rating from shelf row).
-3. **Read dates** — list comparison (`book_dates_read` table vs. current dates from shelf row). Order-dependent (chronological order matters).
+3. **Read dates** — sorted list comparison (`book_dates_read` table vs. current dates from shelf row). Both sides are sorted before comparison because SQLite returns dates in non-deterministic order (no `ORDER BY`), while shelf extraction returns them in DOM order. Sorting eliminates spurious re-scrapes caused by differing order.
 
-If all three match, the book is skipped entirely — no HTTP request, no scraping. This is the fast path for subsequent runs.
+If all three match, `ScrapeStatus.CURRENT` is returned — the book is skipped entirely, no HTTP request, no scraping.
 
-If any field changed but the book already exists in the DB, `update_book_shelf()` updates only the shelf-related fields (rating, shelves, dates) without touching book metadata (title, description, genres, etc.). This is a fast DB-only operation.
+If any field changed but the book already exists in the DB, `ScrapeStatus.CHANGED` is returned. The caller (`_process_book_db` in `shelves.py`) calls `update_book_shelf()` which updates only the shelf-related fields (rating, shelves, dates) without touching book metadata. This is a fast DB-only operation.
 
-If the book is new (not in the DB), the full `scrape_book()` is called and the complete record is inserted via `upsert_book()`.
+If the book is new (not in the DB), `ScrapeStatus.MISSING` is returned. The caller runs the full `scrape_book()` and inserts the complete record via `upsert_book()`.
 
 ## Exclusive shelf detection
 

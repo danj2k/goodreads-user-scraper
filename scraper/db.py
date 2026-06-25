@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from enum import Enum
 from typing import Any
 
 
@@ -275,6 +276,15 @@ def upsert_book(conn: sqlite3.Connection, book: dict[str, Any]) -> None:
 # Book — incremental check
 # ---------------------------------------------------------------------------
 
+
+class ScrapeStatus(Enum):
+    """Tri-state result from :func:`needs_scrape`."""
+
+    CURRENT = "current"  # exists, unchanged — skip entirely
+    CHANGED = "changed"  # exists, shelf data differs — update shelf only
+    MISSING = "missing"  # not in DB — full scrape needed
+
+
 def _fetch_book_state(
     conn: sqlite3.Connection, book_id: str
 ) -> dict[str, Any] | None:
@@ -303,8 +313,8 @@ def _fetch_book_state(
     return {"rating": row[0], "exclusive_shelf": row[1], "shelves": shelves, "dates_read": dates}
 
 
-def needs_scrape(conn: sqlite3.Connection, book_id: str, shelf_data: dict[str, Any]) -> bool:
-    """Return True if *book_id* is missing from the DB or its shelf data changed.
+def needs_scrape(conn: sqlite3.Connection, book_id: str, shelf_data: dict[str, Any]) -> ScrapeStatus:
+    """Determine whether *book_id* needs scraping, and why.
 
     *shelf_data* is the entry from ``_dedupe_books``::
 
@@ -314,19 +324,27 @@ def needs_scrape(conn: sqlite3.Connection, book_id: str, shelf_data: dict[str, A
     extraction can produce: shelf membership, user rating, and read
     dates.  Book metadata (title, description, etc.) is *not*
     compared — it's only set during the expensive page scrape.
+
+    Returns a :class:`ScrapeStatus` indicating whether the book is
+    CURRENT (unchanged), CHANGED (shelf data differs — fast update
+    only), or MISSING (new — full scrape needed).
     """
     state = _fetch_book_state(conn, book_id)
     if state is None:
-        return True  # new book — full scrape needed
+        return ScrapeStatus.MISSING
 
     if state["shelves"] != set(shelf_data["shelves"]):
-        return True
+        return ScrapeStatus.CHANGED
 
     if state["rating"] != shelf_data["rating"]:
-        return True
-    if state["dates_read"] != shelf_data["dates_read"]:
-        return True
-    return False
+        return ScrapeStatus.CHANGED
+
+    # SQLite returns dates in non-deterministic order (no ORDER BY).
+    # Sort both sides to avoid spurious re-scrapes.
+    if sorted(state["dates_read"]) != sorted(shelf_data["dates_read"]):
+        return ScrapeStatus.CHANGED
+
+    return ScrapeStatus.CURRENT
 
 
 # ---------------------------------------------------------------------------

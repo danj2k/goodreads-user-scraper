@@ -179,37 +179,32 @@ async def _process_book_db(
     exclusive_shelves: set[str] | None,
     conn: sqlite3.Connection,
 ) -> bool:
-    from scraper.db import needs_scrape, upsert_author, upsert_book, update_book_shelf
+    from scraper.db import ScrapeStatus, needs_scrape, upsert_author, upsert_book, update_book_shelf
 
     exclusive_shelf = _determine_exclusive_shelf(
         set(info["shelves"]), exclusive_shelves
     )
 
     try:
-        if not needs_scrape(conn, book_id, info):
-            # Book exists with unchanged shelf/rating/dates — fast path.
+        status = needs_scrape(conn, book_id, info)
+        if status == ScrapeStatus.CURRENT:
+            return False
+        if status == ScrapeStatus.CHANGED:
+            # Shelf data changed but metadata is already in DB — fast update.
+            update_book_shelf(conn, book_id, info, exclusive_shelf)
             return False
 
-        # Check whether the book row already exists (for metadata preservation).
-        existing = conn.execute(
-            "SELECT 1 FROM books WHERE book_id = ?", (book_id,)
-        ).fetchone()
-
-        if existing is not None:
-            # Book metadata is already in the DB; just update shelf data.
-            update_book_shelf(conn, book_id, info, exclusive_shelf)
-        else:
-            # New book — full scrape and insert.
-            book = await books.scrape_book(book_id, args)
-            book["rating"] = info["rating"]
-            book["dates_read"] = info["dates_read"]
-            book["shelves"] = info["shelves"]
-            book["exclusive_shelf"] = exclusive_shelf
-            # Upsert the author first so the FK constraint is satisfied.
-            author_data = book.get("author")
-            if isinstance(author_data, dict):
-                upsert_author(conn, author_data)
-            upsert_book(conn, book)
+        # MISSING — new book, full scrape and insert.
+        book = await books.scrape_book(book_id, args)
+        book["rating"] = info["rating"]
+        book["dates_read"] = info["dates_read"]
+        book["shelves"] = info["shelves"]
+        book["exclusive_shelf"] = exclusive_shelf
+        # Upsert the author first so the FK constraint is satisfied.
+        author_data = book.get("author")
+        if isinstance(author_data, dict):
+            upsert_author(conn, author_data)
+        upsert_book(conn, book)
 
         return False
     except http.AuthError:
